@@ -4,14 +4,13 @@ from fastmcp import FastMCP
 
 mcp = FastMCP("Estrela DB Explorer")
 
-def get_connection():
-    # Pega as variáveis do Render
-    server = os.environ.get("DB_SERVER") # Ex: 138.0.xxx.xxx,1433
+def get_connection(database_override=None):
+    server = os.environ.get("DB_SERVER") 
     user = os.environ.get("DB_USER")
     password = os.environ.get("DB_PASS")
-    database = os.environ.get("DB_NAME", "master") # Se não tiver o nome, tenta o 'master' só pra testar a conexão
-    
-    # String de conexão forçando TCP/IP e ignorando validação de certificado
+    # Se database_override for passado, usa ele. Senão, usa o DB_NAME do Render.
+    database = database_override or os.environ.get("DB_NAME")
+
     conn_str = (
         f"DRIVER={{ODBC Driver 18 for SQL Server}};"
         f"SERVER={server};"
@@ -19,14 +18,27 @@ def get_connection():
         f"UID={user};"
         f"PWD={password};"
         f"Encrypt=yes;"
-        f"TrustServerCertificate=yes;" # ESSENCIAL para IPs sem certificado SSL
+        f"TrustServerCertificate=yes;"
     )
-    
+    return pyodbc.connect(conn_str, timeout=10, readonly=True)
+
+@mcp.tool()
+def listar_bancos() -> str:
+    """Lista todos os bancos de dados disponíveis no servidor (ignora o DB_NAME atual)."""
     try:
-        return pyodbc.connect(conn_str, timeout=10)
+        # Força a conexão no banco 'master' para poder listar todos
+        conn = get_connection(database_override="master")
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name")
+        rows = cursor.fetchall()
+        conn.close()
+        
+        if not rows:
+            return "Nenhum banco encontrado (ou sem permissão)."
+            
+        return "Bancos encontrados:\n" + "\n".join([f"- {r[0]}" for r in rows])
     except Exception as e:
-        print(f"ERRO DE CONEXAO: {str(e)}")
-        raise e
+        return f"Erro ao listar bancos: {str(e)}"
 
 @mcp.tool()
 def testar_conexao() -> str:
@@ -37,36 +49,15 @@ def testar_conexao() -> str:
         cursor.execute("SELECT @@VERSION")
         versao = cursor.fetchone()[0]
         conn.close()
-        return f"Conexão bem-sucedida! Versão do SQL Server: {versao}"
+        return f"Conexão bem-sucedida! Versão: {versao}"
     except Exception as e:
-        return f"Falha na conexão. Verifique o Firewall do servidor ou a senha. Erro: {str(e)}"
+        return f"Falha na conexão: {str(e)}"
 
-@mcp.tool()
-def listar_bancos() -> str:
-    """Lista todos os bancos de dados disponíveis neste servidor."""
-    try:
-        conn = get_connection()
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sys.databases WHERE database_id > 4")
-        rows = cursor.fetchall()
-        conn.close()
-        
-        if not rows:
-            return "Conexão ok, mas nenhum banco de usuário foi encontrado."
-            
-        lista = "Bancos encontrados:\n" + "\n".join([f"- {r[0]}" for r in rows])
-        return lista
-    except Exception as e:
-        return f"Erro ao listar bancos: {str(e)}"
-
-# --- As outras funções (listar_tabelas, descrever_tabela, executar_consulta) entram aqui embaixo ---
+# ... (mantenha as outras ferramentas listar_tabelas e executar_consulta aqui embaixo, iguais)
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 8000))
     mcp.run(
-        transport="streamable-http",
-        host="0.0.0.0",
-        port=port,
-        path="/mcp",              # Garante que o endpoint seja /mcp
-        stateless_http=True       # Evita problemas de estado entre requisições
+        transport="streamable-http", host="0.0.0.0", port=port,
+        path="/mcp", stateless_http=True
     )
