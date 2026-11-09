@@ -1,9 +1,17 @@
 import os
 import pyodbc
-from fastmcp import FastMCP
+from fastapi import FastAPI
+from pydantic import BaseModel
 
-# Inicializa o servidor MCP
-mcp = FastMCP("Estrela DB Explorer")
+# Inicializa a API REST para o ChatGPT
+app = FastAPI(
+    title="Estrela DB API",
+    description="API para consultar o banco de dados SQL Server",
+    version="1.0.0"
+)
+
+class ConsultaInput(BaseModel):
+    sql: str
 
 def get_connection(database_override=None):
     server = os.environ.get("DB_SERVER") 
@@ -22,57 +30,36 @@ def get_connection(database_override=None):
     )
     return pyodbc.connect(conn_str, timeout=10, readonly=True)
 
-@mcp.tool()
-def testar_conexao() -> str:
-    """Testa se o servidor consegue falar com o banco de dados."""
+@app.get("/testar_conexao", summary="Testa a conexão com o banco")
+def testar_conexao():
     try:
         conn = get_connection()
         cursor = conn.cursor()
         cursor.execute("SELECT @@VERSION")
         versao = cursor.fetchone()[0]
         conn.close()
-        return f"Conexão OK! Versão: {versao}"
+        return {"status": "Conexão OK", "versao": versao}
     except Exception as e:
-        return f"Falha na conexão: {str(e)}"
+        return {"status": "Falha na conexão", "erro": str(e)}
 
-@mcp.tool()
-def listar_bancos() -> str:
-    """Lista todos os bancos de dados disponíveis no servidor."""
-    try:
-        conn = get_connection(database_override="master")
-        cursor = conn.cursor()
-        cursor.execute("SELECT name FROM sys.databases WHERE database_id > 4 ORDER BY name")
-        rows = cursor.fetchall()
-        conn.close()
-        if not rows: return "Nenhum banco encontrado."
-        return "Bancos encontrados:\n" + "\n".join([f"- {r[0]}" for r in rows])
-    except Exception as e:
-        return f"Erro: {str(e)}"
-
-@mcp.tool()
-def listar_tabelas() -> str:
-    """Lista todas as tabelas do banco de dados."""
+@app.get("/listar_tabelas", summary="Lista todas as tabelas")
+def listar_tabelas():
     try:
         conn = get_connection()
         cursor = conn.cursor()
-        cursor.execute("""
-            SELECT TABLE_SCHEMA, TABLE_NAME 
-            FROM INFORMATION_SCHEMA.TABLES 
-            WHERE TABLE_TYPE = 'BASE TABLE'
-            ORDER BY TABLE_SCHEMA, TABLE_NAME
-        """)
+        cursor.execute("SELECT TABLE_SCHEMA, TABLE_NAME FROM INFORMATION_SCHEMA.TABLES WHERE TABLE_TYPE = 'BASE TABLE'")
         rows = cursor.fetchall()
         conn.close()
-        if not rows: return "Nenhuma tabela encontrada."
-        return "Tabelas:\n" + "\n".join([f"- {r[0]}.{r[1]}" for r in rows])
+        tabelas = [f"{r[0]}.{r[1]}" for r in rows]
+        return {"tabelas": tabelas}
     except Exception as e:
-        return f"Erro: {str(e)}"
+        return {"erro": str(e)}
 
-@mcp.tool()
-def executar_consulta(sql: str) -> str:
-    """Executa uma consulta SELECT e retorna os resultados."""
+@app.post("/executar_consulta", summary="Executa uma consulta SELECT")
+def executar_consulta(dados: ConsultaInput):
+    sql = dados.sql
     if not sql.strip().upper().startswith("SELECT"):
-        return "Erro: Apenas consultas SELECT são permitidas."
+        return {"erro": "Apenas consultas SELECT são permitidas."}
     try:
         conn = get_connection()
         cursor = conn.cursor()
@@ -81,18 +68,18 @@ def executar_consulta(sql: str) -> str:
         rows = cursor.fetchall()
         conn.close()
         
-        if not rows: return "A consulta não retornou resultados."
+        if not rows: 
+            return {"resultado": "A consulta não retornou resultados."}
         
+        # Formata o resultado
         res = " | ".join(colunas) + "\n" + "-" * 50 + "\n"
         for r in rows:
             res += " | ".join(str(v) for v in r) + "\n"
-        return res
+        return {"resultado": res}
     except Exception as e:
-        return f"Erro: {str(e)}"
+        return {"erro": str(e)}
 
 if __name__ == "__main__":
+    import uvicorn
     port = int(os.environ.get("PORT", 8000))
-    mcp.run(
-        transport="streamable-http", host="0.0.0.0", port=port,
-        path="/mcp", stateless_http=True
-    )
+    uvicorn.run(app, host="0.0.0.0", port=port)
