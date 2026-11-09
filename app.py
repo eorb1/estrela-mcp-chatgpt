@@ -80,11 +80,13 @@ def executar_consulta(dados: ConsultaInput):
         return {"erro": str(e)}
 
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 8000))
+    # Garante que a porta do Railway seja usada
+    port = int(os.environ.get("PORT", 8080))
+    
+    # Inicia o servidor FastMCP diretamente, sem uvicorn
     mcp.run(
-        transport="streamable-http", 
-        host="0.0.0.0", 
+        transport="streamable-http",
+        host="0.0.0.0",
         port=port,
-        path="/mcp", 
-        stateless_http=True
+        path="/mcp"  # O ChatGPT precisa do endpoint /mcp
     )
